@@ -1,144 +1,123 @@
 /**
- * ChatGPT Pixel Helper & Inspector - Event Validation Engine
- * Validates payload parameters against schema rules, ISO 4217 standards,
- * and PII safety requirements without mutating data.
+ * OpenAI Pixel Inspector - Comprehensive Schema & Parameter Validation Engine
+ * Validates events against knowledge dictionaries, ISO 4217 minor-unit rules,
+ * and PII privacy criteria without mutating payloads.
  */
 
 import { PixelEvent, ValidationResult, ValidationFinding } from '../types';
-
-const ISO_4217_CURRENCIES = new Set([
-  'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'CNY', 'INR', 'BRL',
-  'MXN', 'SEK', 'NOK', 'DKK', 'NZD', 'SGD', 'HKD', 'KRW', 'ZAR', 'PLN',
-  'TRY', 'AED', 'SAR', 'CZK', 'ILS', 'THB', 'IDR', 'MYR', 'PHP', 'TWD'
-]);
-
-const RAW_EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
-const RAW_PHONE_REGEX = /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/;
+import { lookupEvent } from '../../dictionary/events';
+import { checkMonetaryFormat } from '../../dictionary/currencies';
+import { PrivacyEngine } from '../privacy/privacy-engine';
+import { lookupError } from '../../dictionary/errors';
 
 export function validatePixelEvent(event: PixelEvent): ValidationResult {
   const findings: ValidationFinding[] = [];
   const p = event.normalizedPayload;
-  const name = event.name.toLowerCase();
+  const eventDef = lookupEvent(event.name);
 
-  // 1. Missing Pixel ID check
+  // 1. Missing Pixel ID validation
   if (!event.pixelId) {
+    const err = lookupError('REQ_PIXEL_ID');
     findings.push({
       severity: 'error',
       ruleId: 'REQ_PIXEL_ID',
       parameterPath: 'pid',
       receivedValue: event.pixelId,
-      expectedValue: 'Valid OpenAI Pixel ID string',
-      explanation: 'No Pixel ID (pid) was attached or detected for this event.',
-      recommendedFix: "Ensure oaiq('init', 'YOUR_PIXEL_ID') is called before firing events."
+      expectedValue: err?.expectedDescription || 'Alphanumeric Pixel ID string',
+      explanation: err?.whyItMatters || 'No Pixel ID was attached to this event.',
+      recommendedFix: err?.recommendedFix || "Call oaiq('init', 'PID') prior to tracking."
     });
   }
 
-  // 2. Event-specific validation
-  if (name === 'purchase') {
-    // Value check
-    const val = p.value !== undefined ? p.value : p.val;
-    if (val === undefined || val === null || val === '') {
-      findings.push({
-        severity: 'error',
-        ruleId: 'PURCHASE_VALUE_MISSING',
-        parameterPath: 'value',
-        receivedValue: val,
-        expectedValue: 'Numeric value > 0',
-        explanation: 'The Purchase event is missing a conversion value.',
-        recommendedFix: 'Pass a numeric value (e.g. { value: 49.99 }).'
-      });
-    } else {
-      const numVal = Number(val);
-      if (isNaN(numVal) || numVal < 0) {
+  // 2. Event-specific Required Parameters Check
+  if (eventDef.requiredParameters && eventDef.requiredParameters.length > 0) {
+    for (const reqParam of eventDef.requiredParameters) {
+      const val = p[reqParam];
+      if (val === undefined || val === null || val === '') {
         findings.push({
           severity: 'error',
-          ruleId: 'PURCHASE_VALUE_INVALID',
-          parameterPath: 'value',
+          ruleId: `REQ_PARAM_${reqParam.toUpperCase()}`,
+          parameterPath: reqParam,
           receivedValue: val,
-          expectedValue: 'Non-negative number',
-          explanation: `Received invalid monetary value: ${val}.`,
-          recommendedFix: 'Format value as a clean number (e.g. 29.99), not a string with currency signs.'
+          expectedValue: `Parameter "${reqParam}" is required for event ${event.name}`,
+          explanation: `The event "${event.name}" is missing mandatory parameter "${reqParam}".`,
+          recommendedFix: `Include "${reqParam}" in the event payload.`
         });
       }
     }
+  }
 
-    // Currency check
-    const cur = (p.currency || p.cur) as string | undefined;
-    if (!cur) {
+  // 3. Monetary Amount & Currency Validation
+  const val = p.value !== undefined ? p.value : p.amount !== undefined ? p.amount : p.val;
+  const cur = (p.currency || p.cur) as string | undefined;
+
+  if (cur) {
+    const monetaryCheck = checkMonetaryFormat(val, cur);
+    if (!monetaryCheck.isValid && monetaryCheck.warning) {
       findings.push({
         severity: 'error',
-        ruleId: 'PURCHASE_CURRENCY_MISSING',
-        parameterPath: 'currency',
-        receivedValue: cur,
-        expectedValue: 'ISO 4217 Currency code (e.g. USD, EUR)',
-        explanation: 'The Purchase event is missing a 3-letter currency code.',
-        recommendedFix: "Include { currency: 'USD' } in your event parameters."
+        ruleId: 'MONETARY_AMOUNT_INVALID',
+        parameterPath: p.value !== undefined ? 'value' : 'amount',
+        receivedValue: val,
+        expectedValue: `Valid numeric amount for ${cur}`,
+        explanation: monetaryCheck.warning,
+        recommendedFix: monetaryCheck.suggestedMinorUnit
+          ? `Provide minor unit integer: ${monetaryCheck.suggestedMinorUnit}`
+          : 'Send a clean positive number.'
       });
-    } else if (typeof cur === 'string') {
-      const upper = cur.toUpperCase();
-      if (!ISO_4217_CURRENCIES.has(upper)) {
-        findings.push({
-          severity: 'warning',
-          ruleId: 'CURRENCY_NON_STANDARD',
-          parameterPath: 'currency',
-          receivedValue: cur,
-          expectedValue: 'Standard ISO 4217 3-letter code',
-          explanation: `Currency code "${cur}" is not recognized as a standard ISO 4217 currency.`,
-          recommendedFix: 'Use a recognized 3-letter currency code such as USD, EUR, GBP.'
-        });
-      }
+    } else if (monetaryCheck.warning) {
+      findings.push({
+        severity: 'warning',
+        ruleId: 'MONETARY_UNIT_MISMATCH',
+        parameterPath: p.value !== undefined ? 'value' : 'amount',
+        receivedValue: val,
+        expectedValue: 'Matching integer minor units or standard float',
+        explanation: monetaryCheck.warning,
+        recommendedFix: monetaryCheck.suggestedMinorUnit
+          ? `If your server integration expects integer minor units (cents), send ${monetaryCheck.suggestedMinorUnit}.`
+          : undefined
+      });
     }
   }
 
-  // 3. PII Detection (Emails, Phone numbers)
-  function scanForPII(obj: Record<string, unknown>, pathPrefix = '') {
-    for (const [key, value] of Object.entries(obj)) {
-      const currentPath = pathPrefix ? `${pathPrefix}.${key}` : key;
-      if (typeof value === 'string') {
-        // Skip already hashed 64-char hex strings
-        if (/^[a-f0-9]{64}$/i.test(value)) continue;
-
-        if (RAW_EMAIL_REGEX.test(value)) {
-          findings.push({
-            severity: 'error',
-            ruleId: 'PII_RAW_EMAIL',
-            parameterPath: currentPath,
-            receivedValue: '[REDACTED_EMAIL]',
-            expectedValue: 'SHA-256 Hashed String or omitted',
-            explanation: `Raw plain-text email detected in parameter "${currentPath}".`,
-            recommendedFix: 'Hash customer emails with SHA-256 before transmitting, or omit them.'
-          });
-        }
-
-        if (RAW_PHONE_REGEX.test(value) && value.length >= 7) {
-          findings.push({
-            severity: 'error',
-            ruleId: 'PII_RAW_PHONE',
-            parameterPath: currentPath,
-            receivedValue: '[REDACTED_PHONE]',
-            expectedValue: 'SHA-256 Hashed String or omitted',
-            explanation: `Raw plain-text phone number detected in parameter "${currentPath}".`,
-            recommendedFix: 'Hash phone numbers with SHA-256 before transmitting, or omit them.'
-          });
-        }
-      } else if (value && typeof value === 'object' && !Array.isArray(value)) {
-        scanForPII(value as Record<string, unknown>, currentPath);
-      }
-    }
+  // 4. Privacy & PII Inspection
+  const privacyIssues = PrivacyEngine.scanObject(p);
+  for (const pi of privacyIssues) {
+    findings.push({
+      severity: pi.severity,
+      ruleId: `PII_${pi.piiType.toUpperCase()}`,
+      parameterPath: pi.parameterPath,
+      receivedValue: '[REDACTED_PII]',
+      expectedValue: 'SHA-256 Hashed String or omitted',
+      explanation: pi.reason,
+      recommendedFix: pi.recommendedAction
+    });
   }
 
-  scanForPII(p);
-
-  // 4. Missing Attribution notice (Info)
+  // 5. Attribution Information Warning (Info)
   if (!event.attribution?.oppref && !p.oppref) {
+    const attrInfo = lookupError('ATTR_NO_OPPREF');
     findings.push({
       severity: 'info',
       ruleId: 'ATTR_NO_OPPREF',
       parameterPath: 'oppref',
       receivedValue: null,
-      expectedValue: 'OpenAI attribution token',
-      explanation: 'No __oppref campaign parameter was attached to this event.',
-      recommendedFix: 'Traffic originating from ChatGPT Ads will automatically attach __oppref.'
+      expectedValue: attrInfo?.expectedDescription || 'OpenAI attribution token (__oppref)',
+      explanation: attrInfo?.whyItMatters || 'No __oppref campaign parameter was attached to this event.',
+      recommendedFix: attrInfo?.recommendedFix || 'Traffic originating from ChatGPT Ads will automatically attach __oppref.'
+    });
+  }
+
+  // 6. Deduplication Warning if already flagged
+  if (event.isDuplicate && event.duplicateReason) {
+    findings.push({
+      severity: 'warning',
+      ruleId: 'DUPLICATE_EVENT_DETECTED',
+      parameterPath: 'event_id',
+      receivedValue: event.actualEventId || 'none',
+      expectedValue: 'Unique event per user action',
+      explanation: event.duplicateReason,
+      recommendedFix: 'Implement client debouncing or supply distinct event_id parameters.'
     });
   }
 
