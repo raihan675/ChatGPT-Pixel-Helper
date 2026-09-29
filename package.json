@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && esbuild src/content/content-script.ts --bundle --outfile=dist/content/content-script.js --format=iife --target=chrome100 && esbuild src/bridge/page-bridge.ts --bundle --outfile=dist/bridge/page-bridge.js --format=iife --target=chrome100 && esbuild src/background/service-worker.ts --bundle --outfile=dist/background/service-worker.js --format=esm --target=chrome100",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/all.test.mjs"
   },

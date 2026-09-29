@@ -4,6 +4,7 @@ import { resolve } from 'path';
 
 export default defineConfig({
   plugins: [react()],
+  base: './',
   build: {
     outDir: 'dist',
     emptyOutDir: true,
@@ -15,10 +16,7 @@ export default defineConfig({
         devtools: resolve(__dirname, 'devtools.html'),
         'devtools-panel': resolve(__dirname, 'devtools-panel.html'),
         options: resolve(__dirname, 'options.html'),
-        report: resolve(__dirname, 'report.html'),
-        'background/service-worker': resolve(__dirname, 'src/background/service-worker.ts'),
-        'content/content-script': resolve(__dirname, 'src/content/content-script.ts'),
-        'bridge/page-bridge': resolve(__dirname, 'src/bridge/page-bridge.ts')
+        report: resolve(__dirname, 'report.html')
       },
       output: {
         entryFileNames: (chunkInfo) => {
