@@ -1,18 +1,34 @@
 /**
  * Main Inspector View
- * Shared unified inspector interface for Popup, Side Panel, and DevTools.
+ * Unified tabbed navigation hosting all 8 specialized inspector views:
+ * Overview | Events | Network | Journey | DataLayer | Attribution | Issues | Audit
  */
 
 import React, { useState } from 'react';
 import { useTabState } from '../hooks/useTabState';
 import { Header } from './Header';
-import { EventItem } from './EventItem';
-import { EmptyState } from './EmptyState';
-import { Filter, Layers } from 'lucide-react';
+import { OverviewView } from '../views/OverviewView';
+import { EventsView } from '../views/EventsView';
+import { NetworkView } from '../views/NetworkView';
+import { JourneyView } from '../views/JourneyView';
+import { DataLayerView } from '../views/DataLayerView';
+import { AttributionView } from '../views/AttributionView';
+import { IssuesView } from '../views/IssuesView';
+import { AuditView } from '../views/AuditView';
+
+export type ActiveTabKey =
+  | 'overview'
+  | 'events'
+  | 'network'
+  | 'journey'
+  | 'datalayer'
+  | 'attribution'
+  | 'issues'
+  | 'audit';
 
 export const MainInspectorView: React.FC = () => {
   const { state, loading, clearState, triggerScan, refresh } = useTabState();
-  const [filter, setFilter] = useState<'all' | 'ecommerce' | 'errors'>('all');
+  const [activeTab, setActiveTab] = useState<ActiveTabKey>('overview');
 
   if (loading) {
     return (
@@ -26,98 +42,92 @@ export const MainInspectorView: React.FC = () => {
   }
 
   const events = state?.events || [];
+  const networkRequests = state?.networkRequests || [];
+  const issuesCount = (state?.stats.errors || 0) + (state?.stats.warnings || 0);
 
-  const filteredEvents = events.filter((e) => {
-    if (filter === 'ecommerce') return e.category === 'ecommerce';
-    if (filter === 'errors') return e.validation.hasErrors || e.validation.hasWarnings;
-    return true;
-  });
+  const tabs: Array<{ key: ActiveTabKey; label: string; badge?: number | string }> = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'events', label: 'Events', badge: events.length },
+    { key: 'network', label: 'Network', badge: networkRequests.length },
+    { key: 'journey', label: 'Journey' },
+    { key: 'datalayer', label: 'DataLayer' },
+    { key: 'attribution', label: 'Attribution' },
+    { key: 'issues', label: 'Issues', badge: issuesCount > 0 ? issuesCount : undefined },
+    { key: 'audit', label: 'Audit' }
+  ];
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100 font-sans antialiased">
-      {/* Header Bar */}
-      <Header state={state} onClear={clearState} onRefresh={() => { triggerScan(); refresh(); }} />
+      {/* Brand Header */}
+      <Header
+        state={state}
+        onClear={clearState}
+        onRefresh={() => {
+          triggerScan();
+          refresh();
+        }}
+      />
 
-      {/* Filter / Summary Toolbar */}
-      <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/60 px-4 py-2">
-        <div className="flex items-center space-x-1.5">
-          <Filter className="w-3.5 h-3.5 text-slate-400" />
-          <div className="flex rounded-md bg-slate-800/80 p-0.5 text-[11px]">
+      {/* 8-Tab Navigation Bar */}
+      <div className="sticky top-[73px] z-10 flex overflow-x-auto border-b border-slate-800 bg-slate-900/90 backdrop-blur px-2 text-xs no-scrollbar select-none">
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.key;
+          const isIssueBadge = tab.key === 'issues' && typeof tab.badge === 'number' && tab.badge > 0;
+
+          return (
             <button
-              onClick={() => setFilter('all')}
-              className={`rounded px-2 py-0.5 font-medium transition ${
-                filter === 'all'
-                  ? 'bg-brand-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`flex shrink-0 items-center space-x-1.5 px-3 py-2 font-medium transition border-b-2 ${
+                isActive
+                  ? 'border-brand-500 text-brand-400 font-bold bg-slate-800/40'
+                  : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/20'
               }`}
             >
-              All ({events.length})
-            </button>
-            <button
-              onClick={() => setFilter('ecommerce')}
-              className={`rounded px-2 py-0.5 font-medium transition ${
-                filter === 'ecommerce'
-                  ? 'bg-brand-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Ecommerce
-            </button>
-            <button
-              onClick={() => setFilter('errors')}
-              className={`flex items-center space-x-1 rounded px-2 py-0.5 font-medium transition ${
-                filter === 'errors'
-                  ? 'bg-rose-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <span>Issues</span>
-              {state?.stats.errors ? (
-                <span className="rounded-full bg-rose-500 px-1 py-0.2 text-[9px] text-white">
-                  {state.stats.errors}
+              <span>{tab.label}</span>
+              {tab.badge !== undefined && (
+                <span
+                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-mono leading-none ${
+                    isIssueBadge
+                      ? 'bg-rose-500/20 text-rose-300 font-bold'
+                      : isActive
+                      ? 'bg-brand-500/20 text-brand-300'
+                      : 'bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  {tab.badge}
                 </span>
-              ) : null}
+              )}
             </button>
-          </div>
-        </div>
-
-        {events.length > 0 && (
-          <div className="flex items-center space-x-2 text-[11px] text-slate-400">
-            <span className="flex items-center space-x-1">
-              <Layers className="w-3 h-3 text-slate-400" />
-              <span>{events.length} captured</span>
-            </span>
-          </div>
-        )}
+          );
+        })}
       </div>
 
-      {/* Main Stream Area */}
-      <main className="flex-1 p-3 overflow-y-auto">
-        {filteredEvents.length === 0 ? (
-          events.length === 0 ? (
-            <EmptyState state={state} onRefresh={() => { triggerScan(); refresh(); }} />
-          ) : (
-            <div className="py-12 text-center text-xs text-slate-500">
-              No events matched the selected filter.
-            </div>
-          )
-        ) : (
-          <div className="space-y-2">
-            {filteredEvents.map((evt, idx) => (
-              <EventItem
-                key={evt.internalId}
-                event={evt}
-                isInitiallyExpanded={idx === 0}
-              />
-            ))}
-          </div>
+      {/* Main Content View Area */}
+      <main className="flex-1 p-4 overflow-y-auto">
+        {activeTab === 'overview' && (
+          <OverviewView
+            state={state}
+            onNavigateToTab={(t) => setActiveTab(t as ActiveTabKey)}
+            onRefresh={() => {
+              triggerScan();
+              refresh();
+            }}
+          />
         )}
+        {activeTab === 'events' && <EventsView events={events} />}
+        {activeTab === 'network' && <NetworkView requests={networkRequests} />}
+        {activeTab === 'journey' && <JourneyView events={events} />}
+        {activeTab === 'datalayer' && <DataLayerView state={state} />}
+        {activeTab === 'attribution' && <AttributionView state={state} />}
+        {activeTab === 'issues' && <IssuesView events={events} />}
+        {activeTab === 'audit' && <AuditView state={state} />}
       </main>
 
       {/* Footer Info */}
       <footer className="border-t border-slate-800 bg-slate-900/80 px-4 py-2 text-[10px] text-slate-400 flex items-center justify-between">
-        <span className="font-mono">OpenAI Pixel v0.1.41+</span>
-        <span className="text-slate-400">ChatGPT Pixel Inspector</span>
+        <span className="font-mono">OpenAI Pixel v0.1.41+ • MV3</span>
+        <span className="text-slate-400">OpenAI Pixel Inspector</span>
       </footer>
     </div>
   );
