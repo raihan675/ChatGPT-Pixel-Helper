@@ -6,8 +6,8 @@ node_modules/
 # Testing & Coverage
 coverage/
 
-# Production Build Output (optional: comment out if distributing pre-built binary in git)
-# dist/
+# Production Build Output
+dist/
 
 # Misc
 .DS_Store
